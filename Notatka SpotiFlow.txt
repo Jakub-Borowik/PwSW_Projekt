@@ -1,0 +1,546 @@
+🎵 SPOTIFLOW – NOTATKA NA OBRONĘ
+
+━━━━━━━━━━━━━━━━━━━━
+📌 1. CO TO JEST (30 SEKUND)
+━━━━━━━━━━━━━━━━━━━━
+
+SpotiFlow to aplikacja na Windows, która obserwuje Twoje Spotify i po każdej piosence sama dodaje do kolejki następną.
+
+Dobiera ją po tym, JAK DŁUGO słuchałeś poprzedniej:
+• przełączyłeś szybko (W < 0,25) → dodaje utwór PRZECIWNY (1 − A)
+• słuchałeś (W ≥ 0,25) → dodaje utwór PODOBNY (najbliższy A)
+• kliknąłeś Start → od razu dodaje podobny do tego, co gra
+
+Program NIE odtwarza muzyki. Jest „pilotem” do Spotify (na komputerze, telefonie, głośniku).
+Program NIE analizuje plików audio – operuje tylko na ID utworów i liczbach z internetu.
+
+Zdanie na start obrony:
+„SpotiFlow co 1,5 s sprawdza odtwarzacz Spotify, liczy współczynnik odsłuchu W = t/T dla utworu, który się skończył, i na tej podstawie dodaje do kolejki utwór podobny albo przeciwny, licząc atrybuty akustyczne według wzorów ze specyfikacji.”
+
+
+━━━━━━━━━━━━━━━━━━━━
+🔤 2. SŁOWNICZEK LITER I POJĘĆ
+━━━━━━━━━━━━━━━━━━━━
+
+W – współczynnik odsłuchu (0–1)
+  W = t / T
+
+t – ile słuchałeś (największy zaobserwowany postęp, w ms)
+T – ile trwa cały utwór (ms)
+
+A – profil utworu: 4 liczby od 0 do 1
+  • taneczność (danceability)
+  • energia (energy)
+  • nastrój (valence; 0 smutny, 1 radosny)
+  • akustyczność (acousticness; 1 gitara, 0 elektronika)
+
+A_stare – profil utworu, który się skończył
+A_nowe – profil, którego szukamy (cel, w kodzie: target)
+Δ (delta) – ze wzoru A ± Δ w specyfikacji. U nas bez sztywnego progu: bierzemy kandydata z NAJMNIEJSZĄ odległością od A (czyli najmniejsze możliwe Δ)
+
+Ziarno (seed) – utwór, od którego ReccoBeats zaczyna szukać kandydatów
+Kandydat – utwór zaproponowany przez ReccoBeats
+Odległość – suma różnic 4 atrybutów (im mniej, tym bliżej)
+
+ID utworu – napis typu 0VjIjW4GlUZAMYd2vXMi3b („PESEL” piosenki w Spotify)
+URI – spotify:track:ID (potrzebny do dodania do kolejki)
+
+
+━━━━━━━━━━━━━━━━━━━━
+🧠 3. CAŁA LOGIKA W 6 KROKACH
+━━━━━━━━━━━━━━━━━━━━
+
+Co 1,5 s pętla robi jeden cykl:
+
+1️⃣ Pyta Spotify, co gra
+   GET /me/player → ID, postęp (t), długość (T)
+
+2️⃣ Ten sam utwór co poprzednio?
+   → zapamiętaj NAJWIĘKSZY postęp (Math.Max) i koniec cyklu
+
+3️⃣ Inny utwór?
+   → poprzedni się skończył → liczymy W = t / T
+
+4️⃣ Decyzja
+   W < 0,25 → POMINIĘTY (Skipped)
+   W ≥ 0,25 → WYSŁUCHANY (Engaged)
+
+5️⃣ Cel (A_nowe)
+   pominięty → 1 − A
+   wysłuchany → A (szukamy najbliższego)
+
+6️⃣ Dobór i kolejka
+   ReccoBeats daje kandydatów → odrzucamy grane w ostatniej godzinie → wybieramy NAJBLIŻSZY celowi → POST /me/player/queue
+
+
+━━━━━━━━━━━━━━━━━━━━
+🧮 4. PRZYKŁAD 1: POMINIĘCIE (krok po kroku)
+━━━━━━━━━━━━━━━━━━━━
+
+DANE:
+Utwór A: taneczność 0,80 · energia 0,90 · nastrój 0,70 · akustyczność 0,10
+T = 200 000 ms (3:20)
+Użytkownik przełączył po 10 s.
+ReccoBeats proponuje:
+  C = 0,30 · 0,20 · 0,30 · 0,80 (spokojny)
+  D = 0,75 · 0,85 · 0,65 · 0,15 (jak A)
+
+CYKLE PĘTLI (co 1,5 s):
+cykl 1: gra A, progress 1 000 → max 1 000
+cykl 4: gra A, progress 5 500 → max 5 500
+cykl 7: gra A, progress 10 000 → max 10 000
+cykl 8: gra B! → ID się zmieniło → A się skończył
+
+LICZENIE W:
+W = 10 000 / 200 000 = 0,05
+
+DECYZJA:
+0,05 < 0,25 → Skipped (pominięty)
+Okno: „POMINIĘTY · W = 0,05”
+
+CEL = 1 − A:
+1 − 0,80 = 0,20
+1 − 0,90 = 0,10
+1 − 0,70 = 0,30
+1 − 0,10 = 0,90
+cel = (0,20 · 0,10 · 0,30 · 0,90) → spokojny, akustyczny
+
+ZAPYTANIE DO RECCOBEATS:
+track/recommendation?size=20&seeds=A&danceability=0.200&energy=0.100&valence=0.300&acousticness=0.900
+→ kandydaci [C, D]
+
+RB-03: C i D nie grały w ostatniej godzinie → zostają
+
+ODLEGŁOŚĆ OD CELU:
+C: |0,30−0,20| + |0,20−0,10| + |0,30−0,30| + |0,80−0,90|
+ = 0,10 + 0,10 + 0 + 0,10 = 0,30 ✅
+D: |0,75−0,20| + |0,85−0,10| + |0,65−0,30| + |0,15−0,90|
+ = 0,55 + 0,75 + 0,35 + 0,75 = 2,40
+
+WYGRYWA C (najmniejsza odległość)
+Komunikat: „Najbliższym utworem jest „Calm Night” (odległość 0,30).”
+
+KOLEJKA:
+GET /me/player/queue → nasz poprzedni nie czeka → OK
+POST /me/player/queue?uri=spotify:track:C → 204
+Okno: „DODANO DO KOLEJKI · Calm Night”
+
+
+━━━━━━━━━━━━━━━━━━━━
+🧮 5. PRZYKŁAD 2: WYSŁUCHANIE
+━━━━━━━━━━━━━━━━━━━━
+
+Ten sam kod, inne liczby:
+t = 190 000 ms
+W = 190 000 / 200 000 = 0,95
+0,95 ≥ 0,25 → Engaged (wysłuchany)
+cel = A = (0,80 · 0,90 · 0,70 · 0,10)
+
+Odległości:
+C: 0,50 + 0,70 + 0,40 + 0,70 = 2,30
+D: 0,05 + 0,05 + 0,05 + 0,05 = 0,20 ✅
+
+Wygrywa D (podobny).
+Komunikat: „Najbliższym utworem jest „Dance Tonight” (odległość 0,20).”
+
+Porównanie:
+                pominięcie   wysłuchanie
+t               10 000       190 000
+W               0,05         0,95
+decyzja         Skipped      Engaged
+cel             1 − A        A
+wybrany         C            D
+
+
+━━━━━━━━━━━━━━━━━━━━
+🧮 6. INNE PRZYKŁADY W
+━━━━━━━━━━━━━━━━━━━━
+
+W = 0,24 → pominięty
+W = 0,25 → wysłuchany (granica należy do „wysłuchany”)
+W = 0,50 → wysłuchany
+T = 0 → W = 0 (zabezpieczenie przed dzieleniem przez zero)
+t > T → W = 1 (Math.Clamp przycina do 0–1)
+
+Przewinięcie do tyłu: słuchałeś do 60 s, przewinąłeś na 10 s → t zostaje 60 s (bo Math.Max).
+
+
+━━━━━━━━━━━━━━━━━━━━
+💻 7. NAJWAŻNIEJSZE LINIJKI KODU
+━━━━━━━━━━━━━━━━━━━━
+
+▶ PĘTLA (PlaybackMonitor.RunAsync)
+
+while (!ct.IsCancellationRequested)
+{
+  await PollOnceAsync(ct);
+  await Task.Delay(delay, ct); // 1,5 s
+}
+
+▶ CO GRA (PollOnceAsync)
+
+PlaybackState? state = await _spotify.GetPlaybackStateAsync(ct);
+SpotifyTrack track = state.Item;
+int progress = state.ProgressMs ?? 0;
+
+▶ TEN SAM UTWÓR
+
+if (track.Id == _currentTrack.Id)
+{
+  _maxProgressMs = Math.Max(_maxProgressMs, progress);
+  return;
+}
+
+▶ ZMIANA UTWORU
+
+SpotifyTrack finished = _currentTrack;
+double w = ListeningAnalyzer.CalculateListenRatio(_maxProgressMs, finished.DurationMs);
+ListeningDecision decision = ListeningAnalyzer.Decide(w);
+TrackJudged?.Invoke(finished, w, decision);
+await StartTrackingAsync(track, progress, ct);
+await QueueNextAsync(finished.Id, finished.Name, decision, ct);
+
+▶ W I DECYZJA (ListeningAnalyzer)
+
+return Math.Clamp((double)listenedMs / durationMs, 0, 1);
+
+return listenRatio < SkipThreshold
+  ? ListeningDecision.Skipped
+  : ListeningDecision.Engaged;
+
+(double) – bo int / int w C# obcina: 10000 / 200000 = 0 ❗
+
+▶ CEL (RecommendationEngine)
+
+AudioProfile target = decision == ListeningDecision.Skipped
+  ? old.Inverted()
+  : old;
+
+▶ 1 − A (AudioProfile)
+
+public AudioProfile Inverted() => new(1 - Danceability, 1 - Energy, 1 - Valence, 1 - Acousticness);
+
+▶ KANDYDACI + RB-03 + WYBÓR
+
+var candidates = await _recco.GetRecommendationsAsync(sourceId, target, 20, ct);
+candidates = candidates.Where(c => c.SpotifyId != sourceId && !_history.WasRecentlyPlayed(c.SpotifyId)).ToList();
+RecommendedTrack best = ChooseClosest(candidates, _profiles, target);
+
+ChooseClosest = OrderBy(odległość).First()
+
+▶ DODANIE DO KOLEJKI
+
+if (await OurTrackIsWaitingAsync(ct)) return;
+await _spotify.AddToQueueAsync(next.Uri, ct);
+_history.Remember(next.SpotifyId);
+TrackQueued?.Invoke(next);
+
+
+━━━━━━━━━━━━━━━━━━━━
+📁 8. STRUKTURA PROJEKTU
+━━━━━━━━━━━━━━━━━━━━
+
+3 projekty w jednej solucji (SpotiFlow.sln):
+
+🖥 SpotiFlow – okno (WinUI 3)
+• App.xaml – ciemny motyw, zielony akcent #1DB954, styl kart
+• MainWindow.xaml – wygląd okna
+• MainWindow.xaml.cs – Mica, pasek tytułu, rozmiar
+• ViewModels/MainViewModel.cs – dane i przyciski
+• ViewModels/HistoryItem.cs – jeden blok historii
+
+🧠 SpotiFlow.Core – logika (bez okna)
+• Logic/PlaybackMonitor.cs – pętla, wykrycie zmiany
+• Logic/ListeningAnalyzer.cs – W i próg 0,25
+• Logic/AudioProfile.cs – A, 1 − A, odległość
+• Logic/RecommendationEngine.cs – dobór (5 kroków)
+• Logic/PlayHistory.cs – pamięć 1 h (RB-03)
+• ReccoBeats/ReccoBeatsClient.cs – atrybuty i kandydaci
+• Spotify/SpotifyAuthService.cs – logowanie OAuth + PKCE
+• Spotify/SpotifyApiClient.cs – zapytania do Spotify
+• Spotify/SpotifyCoverService.cs – okładki
+• Spotify/SpotifyModels.cs – klasy na JSON
+• AppSettings.cs – zapis Client ID
+
+🧪 SpotiFlow.Tests – 8 testów (xUnit)
+• LogicTests – wzory, próg, historia
+• PlaybackMonitorTests – cała pętla na udawanym internecie
+
+Czemu Core osobno? Logika nie zależy od okna → da się ją testować bez klikania.
+
+
+━━━━━━━━━━━━━━━━━━━━
+🌐 9. ZAPYTANIA DO INTERNETU (API)
+━━━━━━━━━━━━━━━━━━━━
+
+SPOTIFY (api.spotify.com/v1):
+• GET me/player – co gra (ID, progress_ms, duration_ms)
+• GET me/player/queue – co czeka w kolejce
+• POST me/player/queue?uri=... – dodaj do kolejki (WYJŚCIE systemu)
+
+RECCOBEATS (api.reccobeats.com/v1) – darmowe, bez klucza:
+• GET audio-features?ids=A,C,D – atrybuty (A)
+• GET track/recommendation?seeds=A&energy=0.100... – kandydaci
+
+SPOTIFY oEMBED (open.spotify.com/oembed) – okładki, bez logowania.
+
+Czemu ReccoBeats, a nie Spotify?
+Spotify od 27.11.2024 zwraca 403 nowym aplikacjom dla Audio Features i Recommendations. ReccoBeats daje te same atrybuty 0–1 i przyjmuje ID ze Spotify.
+
+Skąd są ID?
+• utwór grający / zakończony → ze Spotify (GET /me/player)
+• kandydaci → z ReccoBeats (pole href „open.spotify.com/track/ID”)
+Wszystko z internetu. Na komputerze tylko pamięć podręczna w RAM (_profiles), żeby nie pytać dwa razy.
+
+Liczby w adresie z KROPKĄ (InvariantCulture) – polski Windows wstawiłby przecinek, a API go nie zrozumie.
+
+
+━━━━━━━━━━━━━━━━━━━━
+🔐 10. LOGOWANIE (OAuth 2.0 + PKCE)
+━━━━━━━━━━━━━━━━━━━━
+
+1. Użytkownik wkleja Client ID (z developer.spotify.com).
+2. Program losuje code_verifier (hasło jednorazowe) i liczy z niego SHA-256 → code_challenge.
+3. Uruchamia mini-serwer na 127.0.0.1:5543 (TcpListener).
+4. Otwiera przeglądarkę ze stroną logowania Spotify (wysyła tylko code_challenge).
+5. Po zalogowaniu Spotify przekierowuje na http://127.0.0.1:5543/callback?code=...
+6. Program odbiera code i wymienia go na token, pokazując code_verifier.
+7. Dostaje access token (1 h) i refresh token.
+
+Po co PKCE? Ktoś, kto przechwyci code, nie wymieni go na token bez code_verifier.
+Po co state? Ochrona przed podsunięciem cudzej odpowiedzi.
+Timeout logowania: 15 s.
+Uprawnienia (scopes): user-read-playback-state, user-modify-playback-state, user-read-currently-playing.
+
+Token NIE jest zapisywany na dysku (bezpieczeństwo). Zapisujemy tylko Client ID w %AppData%\SpotiFlow\settings.json.
+Token wygasł (401) → odświeżamy go po cichu refresh tokenem.
+
+Czemu PKCE a nie Implicit Grant ze specyfikacji? Spotify wyłączył Implicit Grant.
+
+
+━━━━━━━━━━━━━━━━━━━━
+⚠️ 11. OBSŁUGA BŁĘDÓW
+━━━━━━━━━━━━━━━━━━━━
+
+204 – brak aktywnego urządzenia → „uruchom Spotify”
+podcast / reklama → czekamy na muzykę
+401 – token wygasł → odśwież; nie wyszło → stop, zaloguj ponownie
+403 – brak Premium / konto nie w User Management → stop + czerwony pasek (InfoBar)
+429 – za dużo zapytań → czekamy tyle, ile mówi nagłówek Retry-After
+5xx (np. 502) – awaria Spotify → 1 ponowienie po 1 s, potem pętla działa dalej
+brak internetu → komunikat, próba w następnym cyklu
+ReccoBeats nie zna utworu → komunikat „brak propozycji”, pętla działa dalej
+
+
+━━━━━━━━━━━━━━━━━━━━
+📏 12. REGUŁY BIZNESOWE (RB)
+━━━━━━━━━━━━━━━━━━━━
+
+RB-01 – wymagane Spotify Premium (inaczej 403)
+RB-02 – sztywny interwał: 1,5 s (≈ 20 zapytań na 30 s, bezpiecznie poniżej limitu)
+RB-03 – brak duplikatów: utwór grany lub dodany w ostatniej godzinie nie wraca (PlayHistory)
+
+Dodatkowo:
+• najwyżej JEDNA propozycja SpotiFlow czeka w kolejce (inaczej dwie przeplatające się „linie”)
+• nie pasuje propozycja → użytkownik po prostu ją pomija w Spotify, a SpotiFlow dodaje jej przeciwieństwo
+
+
+━━━━━━━━━━━━━━━━━━━━
+🔀 13. ODSTĘPSTWA OD SPECYFIKACJI
+━━━━━━━━━━━━━━━━━━━━
+
+• Implicit Grant → PKCE (Spotify wyłączył Implicit Grant)
+• Spotify Audio Features/Recommendations → ReccoBeats (Spotify daje 403)
+• Timer → async/await + Task.Delay (nie blokuje okna, łatwo przerwać)
+• 5 s → 1,5 s (szybsze wykrywanie, nadal bezpieczne)
+• progi 0,15 i 0,80 → jeden próg 0,25
+  Czemu? Środkowa strefa (0,15–0,80) i tak musiała coś dodać, a sensownie było dodać podobny, czyli to samo co przy akceptacji. Więc wystarczy jeden próg.
+• Start od razu dodaje podobny utwór
+
+
+━━━━━━━━━━━━━━━━━━━━
+🏗 14. MVVM I ZDARZENIA
+━━━━━━━━━━━━━━━━━━━━
+
+MVVM = Model – View – ViewModel
+• Model – logika (SpotiFlow.Core)
+• View – wygląd (MainWindow.xaml)
+• ViewModel – dane i komendy dla okna (MainViewModel)
+
+Pętla NIE zna okna. Ogłasza zdarzenia (event), a ViewModel się pod nie podpina:
+_monitor.TrackJudged += (track, w, decision) => RunOnUi(() => ShowVerdict(track, w, decision));
+
+Zdarzenia:
+• NowPlaying – zaczął grać utwór → karta „Teraz gra”
+• TrackProgress – co 1,5 s → pasek W
+• TrackJudged – utwór się skończył → POMINIĘTY / WYSŁUCHANY
+• TrackQueued – dodano → DODANO DO KOLEJKI
+• Log – szare komunikaty (błędy na czerwono)
+• FatalError – 401/403 → czerwony pasek
+
+RunOnUi – kontrolki wolno zmieniać tylko z wątku okna; jeśli jesteśmy na innym wątku, akcja idzie do kolejki DispatcherQueue.
+
+Plakietki jednego bloku:
+DODANO DO KOLEJKI → TERAZ GRA → POMINIĘTY / WYSŁUCHANY
+Historia trzyma max 60 wpisów (najstarszy z dołu znika).
+
+
+━━━━━━━━━━━━━━━━━━━━
+🪟 15. XAML I WINUI – PODSTAWY
+━━━━━━━━━━━━━━━━━━━━
+
+XAML – język opisu wyglądu (jak HTML dla aplikacji Windows).
+XAML + .xaml.cs = dwie połówki jednej klasy (partial). Kompilator generuje z XAML-a kod, a InitializeComponent() tworzy kontrolki.
+
+x: – przedrostek przestrzeni nazw XAML (x:Class, x:Name, x:Bind, x:Key).
+
+Grid – siatka wierszy i kolumn:
+• 48 – stały rozmiar w px
+• * – reszta miejsca
+• Auto – tyle, ile potrzebuje zawartość
+
+Padding – odstęp wewnątrz elementu (lewo, góra, prawo, dół).
+BorderThickness – grubość ramki.
+
+x:Bind – wiązanie danych:
+• OneTime (domyślny w x:Bind) – raz przy starcie
+• OneWay – ViewModel → okno, przy każdej zmianie (np. pasek W)
+• TwoWay – w obie strony (np. pole Client ID)
+
+[ObservableProperty] – generuje powiadamianie okna o zmianie (PropertyChanged).
+[RelayCommand] – metoda staje się komendą przycisku (Command="{x:Bind ViewModel.StartCommand}").
+
+Mica – tło okna Windows 11, przez które lekko przebija kolor tapety.
+Pasek tytułu – przejęty przez ExtendsContentIntoTitleBar = true i SetTitleBar(AppTitleBar), żeby był w stylu aplikacji.
+Ikony – znaki czcionki Segoe Fluent Icons (FontIcon Glyph="&#xE8D6;" = nutka).
+app.manifest – ostry obraz przy skalowaniu ekranu (DPI).
+
+
+━━━━━━━━━━━━━━━━━━━━
+🔧 16. C# – OPERATORY, KTÓRE PADAJĄ W KODZIE
+━━━━━━━━━━━━━━━━━━━━
+
+? przy typie – może być null: double? value
+?. – wywołaj, jeśli nie null: _monitorCts?.Cancel()
+?? – wartość zastępcza: value ?? 0
+??= – przypisz, jeśli null
+warunek ? a : b – skrócony if/else zwracający wartość
+x is string s – sprawdź typ i od razu zapisz do zmiennej
+=> – metoda w jednej linii / lambda
+(_, _) => ... – lambda z pominiętymi parametrami
+{ get; private init; } – czytają wszyscy, ustawia tylko klasa i tylko przy tworzeniu
+partial – klasa podzielona na kilka plików
+async/await – czekanie bez blokowania okna
+CancellationToken – sygnał „przerwij” (przycisk Stop)
+event + Invoke – powiadamianie innych klas
+"0.00" – format liczby: 2 miejsca po przecinku
+$"W = {w:0.00}" – interpolacja napisu z formatem
+LINQ: Where (filtr), Select (zamiana), OrderBy (sort), First (pierwszy)
+
+
+━━━━━━━━━━━━━━━━━━━━
+🧪 17. TESTY
+━━━━━━━━━━━━━━━━━━━━
+
+8 testów xUnit, bez internetu i bez Premium.
+FakeHttpHandler – udawany internet: zamiast łączyć się ze Spotify/ReccoBeats zwraca przygotowany JSON.
+
+LogicTests (5):
+• W: 10 000 / 200 000 = 0,05 (i T = 0 → W = 0)
+• próg: 0,24 → Skipped, 0,25 → Engaged
+• 1 − A: (0,8; 0,9; 0,7; 0,1) → (0,2; 0,1; 0,3; 0,9)
+• odległość: C = 0,30, D = 2,40
+• historia zapomina po godzinie (sztuczny zegar)
+
+PlaybackMonitorTests (3):
+• szybkie pominięcie → energy=0.100 → do kolejki C
+• wysłuchanie → energy=0.900 → podobny, bez utworów z ostatniej godziny
+• 403 → pętla sama się zatrzymuje
+
+
+━━━━━━━━━━━━━━━━━━━━
+❓ 18. PYTANIA NA OBRONĘ + ODPOWIEDZI
+━━━━━━━━━━━━━━━━━━━━
+
+P: Skąd bierzesz t?
+O: To _maxProgressMs – największy postęp zaobserwowany, dopóki grał utwór.
+
+P: Czemu największy, a nie ostatni?
+O: Żeby przewinięcie do tyłu nie zaniżało wyniku.
+
+P: Jak wykrywasz zmianę utworu?
+O: Porównuję ID utworu z obecnego cyklu z ID zapamiętanym w poprzednim.
+
+P: Czemu (double) w dzieleniu?
+O: int / int obcina do liczby całkowitej, wyszłoby 0.
+
+P: Czemu jeden próg zamiast dwóch?
+O: Strefa środkowa robiła to samo co akceptacja.
+
+P: Czemu 1,5 s?
+O: Szybko wykrywa pominięcia, a ≈ 20 zapytań na 30 s jest bezpiecznie poniżej limitu (429).
+
+P: Skąd atrybuty utworów?
+O: Z ReccoBeats, bo Spotify od 2024 zwraca 403 nowym aplikacjom.
+
+P: Co gdy ReccoBeats nie zna utworu?
+O: Komunikat w historii, nic nie dodajemy, pętla działa dalej.
+
+P: Jak liczysz podobieństwo?
+O: Odległość = suma różnic czterech atrybutów. Wybieram kandydata z najmniejszą.
+
+P: Gdzie jest A ± Δ ze specyfikacji?
+O: Zamiast sztywnego progu (np. 0,15) biorę kandydata najbliższego A – najmniejsza suma różnic to najmniejsze możliwe Δ. Próg i tak nie zmieniał wyboru.
+
+P: Co to jest ziarno?
+O: Utwór, od którego ReccoBeats zaczyna szukać – u nas utwór, który się skończył.
+
+P: Czy program analizuje dźwięk?
+O: Nie. Działa na ID utworów i gotowych liczbach z ReccoBeats.
+
+P: Czemu token nie jest zapisany?
+O: Dawałby dostęp do konta. Trzymamy go tylko w pamięci.
+
+P: Po co PKCE?
+O: Przechwycony kod jest bezużyteczny bez code_verifier, a nie potrzeba client secret.
+
+P: Czemu async/await, a nie Timer?
+O: Nie blokuje okna, łatwo przerwać CancellationTokenem i uśpić na Retry-After.
+
+P: Czy da się usunąć propozycję z kolejki?
+O: Nie ma takiego przycisku – Spotify Web API nie pozwala usuwać z kolejki. Wystarczy pominąć utwór w Spotify: to zwykłe pominięcie, więc SpotiFlow doda jego przeciwieństwo.
+
+P: Czemu w kolejce czeka max jedna propozycja?
+O: Bez tego powstają dwie przeplatające się linie utworów. Sprawdzam GET /me/player/queue przed dodaniem.
+
+P: Co to MVVM i po co?
+O: Model–View–ViewModel. Logikę testuję bez okna, a okno odświeża się samo przez data binding.
+
+P: Czemu pętla nie zmienia okna bezpośrednio?
+O: Bo nie zna okna – ogłasza zdarzenia, a ViewModel je obsługuje (luźne powiązanie, testowalność).
+
+P: Co robi RunOnUi?
+O: Kontrolki można zmieniać tylko z wątku UI, więc akcję z innego wątku wrzuca do DispatcherQueue.
+
+P: Czemu jeden HttpClient?
+O: Zalecenie Microsoftu – tworzenie wielu wyczerpuje porty.
+
+P: Czemu „Pop” przy muzyce klasycznej? (stara wersja)
+O: Gatunek był z albumu w Deezerze, podany przez wydawcę – usunięte w uproszczonej wersji.
+
+P: Jak działa na telefonie?
+O: SpotiFlow działa na PC, a muzyka może grać na telefonie – Spotify Connect, ten sam stan konta.
+
+
+━━━━━━━━━━━━━━━━━━━━
+⭐ 19. ŚCIĄGA – 8 ZDAŃ
+━━━━━━━━━━━━━━━━━━━━
+
+1. Co 1,5 s pętla pyta Spotify: GET /me/player.
+2. Ten sam utwór → zapamiętaj największy postęp (Math.Max).
+3. Inne ID → poprzedni się skończył → W = t / T.
+4. W < 0,25 → pominięty, inaczej wysłuchany.
+5. Pominięty → cel 1 − A. Wysłuchany → cel A (najbliższy).
+6. ReccoBeats daje kandydatów: ziarno = ten utwór, cel = 4 liczby.
+7. Odrzucamy utwory z ostatniej godziny (RB-03).
+8. Najmniejsza odległość wygrywa → POST /me/player/queue.

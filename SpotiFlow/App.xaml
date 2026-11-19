@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Application
+    x:Class="SpotiFlow.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    RequestedTheme="Dark">
+
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <Color x:Key="SystemAccentColor">#1DB954</Color>
+            <Color x:Key="SystemAccentColorLight1">#1ED760</Color>
+            <Color x:Key="SystemAccentColorLight2">#1DB954</Color>
+            <Color x:Key="SystemAccentColorLight3">#62E08F</Color>
+            <Color x:Key="SystemAccentColorDark1">#18A048</Color>
+            <Color x:Key="SystemAccentColorDark2">#13853B</Color>
+            <Color x:Key="SystemAccentColorDark3">#0E6A2E</Color>
+
+            <Style x:Key="CardStyle" TargetType="Border">
+                <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="10" />
+                <Setter Property="Padding" Value="10" />
+            </Style>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

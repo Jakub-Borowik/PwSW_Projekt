@@ -1,0 +1,203 @@
+SPOTIFLOW – NAJWAŻNIEJSZE METODY
+(kolejność plików = kolejność nauki)
+
+━━━━━━━━━━━━━━━━━━━━
+1. ListeningAnalyzer.cs – czy wysłuchany?
+━━━━━━━━━━━━━━━━━━━━
+CalculateListenRatio(listenedMs, durationMs)
+→ liczy W = t / T. Np. 10 000 / 200 000 = 0,05. Gdy T = 0, zwraca 0 (bez dzielenia przez zero).
+
+Decide(listenRatio)
+→ W < 0,25 → Skipped (pominięty), w przeciwnym razie Engaged (wysłuchany).
+
+━━━━━━━━━━━━━━━━━━━━
+2. AudioProfile.cs – 4 atrybuty utworu (taneczność, energia, nastrój, akustyczność)
+━━━━━━━━━━━━━━━━━━━━
+Inverted()
+→ przeciwieństwo: każdą wartość zamienia na 1 − wartość. Używane przy pominięciu.
+  (0,8; 0,9; 0,7; 0,1) → (0,2; 0,1; 0,3; 0,9)
+
+DistanceTo(other)
+→ odległość między dwoma profilami = suma różnic bez znaku. Im mniej, tym bardziej podobne.
+  Liczona między kandydatem a CELEM (A albo 1 − A).
+
+ToString()
+→ ładny tekst do logu: „taneczność 0,20 - energia 0,10 - …”.
+
+━━━━━━━━━━━━━━━━━━━━
+3. PlayHistory.cs – reguła RB-03 (bez powtórek przez godzinę)
+━━━━━━━━━━━━━━━━━━━━
+Remember(trackId)
+→ zapisuje w słowniku _lastSeen: ID → teraz. Wołane, gdy utwór zaczyna grać i gdy go dodajemy do kolejki.
+
+WasRecentlyPlayed(trackId)
+→ true, jeśli utwór był w ostatniej godzinie.
+
+RemoveExpired()  (prywatna)
+→ wyrzuca wpisy starsze niż godzina. Wołana na początku Remember i WasRecentlyPlayed.
+
+━━━━━━━━━━━━━━━━━━━━
+4. SpotifyApiClient.cs – rozmowa ze Spotify
+━━━━━━━━━━━━━━━━━━━━
+SetSession(auth, token)
+→ po zalogowaniu zapamiętuje token, żeby można było wysyłać zapytania.
+
+GetPlaybackStateAsync()
+→ GET me/player – co gra, na której sekundzie, jak długi utwór. Null = brak aktywnego urządzenia (204).
+  Z JSON-a deserializator buduje obiekty PlaybackState i SpotifyTrack.
+
+GetQueueAsync()
+→ GET me/player/queue – co czeka w kolejce.
+
+AddToQueueAsync(trackUri)
+→ POST me/player/queue?uri=spotify:track:ID – dodaje utwór do kolejki. WYJŚCIE systemu.
+
+SendAsync()  (prywatna)
+→ wspólne wysyłanie: dokleja token, przy 401 raz odświeża token, przy 5xx czeka 1 s i ponawia,
+  inny błąd zamienia na SpotifyApiException z kodem HTTP.
+
+━━━━━━━━━━━━━━━━━━━━
+5. ReccoBeatsClient.cs – rozmowa z ReccoBeats (atrybuty i kandydaci)
+━━━━━━━━━━━━━━━━━━━━
+GetAudioFeaturesAsync(spotifyIds)
+→ GET audio-features?ids=A,C,D – zwraca słownik ID → AudioProfile (max 40 ID w jednym zapytaniu).
+
+GetRecommendationsAsync(seedSpotifyId, target, size)
+→ GET track/recommendation?seeds=A&danceability=…&energy=… – lista kandydatów podobnych do celu.
+
+ExtractSpotifyId(href)
+→ wycina Spotify ID z linku https://open.spotify.com/track/ID.
+
+━━━━━━━━━━━━━━━━━━━━
+6. RecommendationEngine.cs – SERCE: dobór następnego utworu
+━━━━━━━━━━━━━━━━━━━━
+GetProfileAsync(trackId)
+→ atrybuty jednego utworu (z cache _profiles albo z ReccoBeats). Null = ReccoBeats go nie zna.
+
+FindNextTrackAsync(sourceId, sourceName, decision)
+→ CAŁY DOBÓR:
+  1. A = GetProfileAsync(sourceId) (null → „brak propozycji”)
+  2. cel = pominięty ? 1 − A : A
+  3. kandydaci = ReccoBeats GetRecommendationsAsync (20 sztuk)
+  4. wyrzuć sourceId i utwory z ostatniej godziny (RB-03)
+  5. pobierz atrybuty kandydatów → ChooseClosest
+  6. zwróć Recommendation (ID, tytuł, artyści, profil)
+
+ChooseClosest(candidates, profiles, target)
+→ wybiera kandydata z najmniejszym DistanceTo(target).
+
+LoadProfilesAsync(ids)  (prywatna)
+→ dociąga atrybuty tylko tych utworów, których nie ma w cache _profiles, jednym zapytaniem.
+  Gdy ReccoBeats nie działa – log „! ReccoBeats niedostępne”, atrybuty zostają nieznane.
+
+━━━━━━━━━━━━━━━━━━━━
+7. PlaybackMonitor.cs – PĘTLA (łączy wszystko)
+━━━━━━━━━━━━━━━━━━━━
+RunAsync(ct)
+→ pętla: PollOnceAsync, potem przerwa 1,5 s, aż do Stop (CancellationToken).
+  Błędy: 429 → czeka Retry-After, 403/401 → FatalError i koniec, inne → log i dalej.
+
+PollOnceAsync(ct)
+→ jedno sprawdzenie:
+  • nic nie gra / podcast → tylko status
+  • pierwszy utwór po Starcie → StartTrackingAsync + QueueNextAsync(podobny)
+  • ten sam utwór → _maxProgressMs = Math.Max(...) (t rośnie)
+  • INNY utwór → finished = stary, W = t/T, Decide, TrackJudged,
+    StartTrackingAsync(nowy), QueueNextAsync(finished, decyzja)
+
+StartTrackingAsync(track, progress)  (prywatna)
+→ „od teraz pilnuję tego utworu”: _currentTrack, _maxProgressMs, Remember (RB-03),
+  pobiera atrybuty i wysyła NowPlaying do okna.
+
+QueueNextAsync(sourceId, sourceName, decision)  (prywatna)
+→ FindNextTrackAsync → jeśli nasza propozycja jeszcze czeka, nic nie robi →
+  AddToQueueAsync → Remember → _lastQueuedId → TrackQueued do okna.
+
+OurTrackIsWaitingAsync()  (prywatna)
+→ sprawdza w kolejce Spotify, czy nasz ostatni utwór (_lastQueuedId) wciąż czeka.
+  Pilnuje, żeby czekała max JEDNA propozycja SpotiFlow.
+
+Zdarzenia (event) – sygnały do okna:
+NowPlaying, TrackProgress, TrackJudged, TrackQueued, Log, StatusChanged, FatalError
+
+━━━━━━━━━━━━━━━━━━━━
+8. SpotifyAuthService.cs – logowanie (OAuth 2.0 + PKCE)
+━━━━━━━━━━━━━━━━━━━━
+LoginAsync()
+→ otwiera przeglądarkę na stronie Spotify, czeka (max 15 s) na powrót na
+  http://127.0.0.1:5543/callback, wymienia kod na token.
+
+WaitForCallbackAsync()  (prywatna)
+→ mini-serwer (TcpListener) odbierający przekierowanie z kodem.
+
+CreateCodeVerifier() / CreateCodeChallenge()
+→ PKCE: losowy sekret i jego skrót SHA-256 – zamiast hasła aplikacji (client secret).
+
+RefreshAsync(refreshToken)
+→ nowy token, gdy stary wygasł (wołane przez SendAsync przy 401).
+
+━━━━━━━━━━━━━━━━━━━━
+9. Pozostałe w Core
+━━━━━━━━━━━━━━━━━━━━
+SpotifyCoverService.GetCoverUrlAsync(trackId)
+→ adres okładki z publicznego oEmbed Spotify.
+
+AppSettings.Load() / Save()
+→ wczytuje / zapisuje Client ID w %AppData%\SpotiFlow\settings.json (bez tokenu).
+
+━━━━━━━━━━━━━━━━━━━━
+10. MainViewModel.cs – okno (MVVM)
+━━━━━━━━━━━━━━━━━━━━
+MainViewModel()  (konstruktor)
+→ składa obiekty: PlayHistory → RecommendationEngine → PlaybackMonitor,
+  zapisuje się na zdarzenia pętli (każde przez RunOnUi).
+
+Przyciski ([RelayCommand]):
+LoginAsync()       → logowanie, zapis Client ID, status „Zalogowano”.
+StartAsync()       → tworzy CancellationTokenSource i uruchamia RunAsync.
+Stop()             → Cancel() – pętla się kończy.
+ClearHistory()     → czyści listę Historii.
+CopyRedirectUriAsync() → kopiuje Redirect URI do schowka.
+
+Reakcje na zdarzenia:
+ShowNowPlaying()   → karta „Teraz gra” + blok „TERAZ GRA” w historii.
+ShowProgress()     → pasek W.
+ShowVerdict()      → plakietka „POMINIĘTY” / „WYSŁUCHANY” z wartością W.
+AddQueuedItem()    → blok „DODANO DO KOLEJKI”.
+ShowFatalError()   → czerwony pasek (401/403).
+
+Pomocnicze:
+AddMessage()       → szary komunikat (czerwony, gdy zaczyna się od „!”).
+AddToHistory()     → wstawia na górę, max 60 wpisów.
+LoadCoverAsync()   → pobiera okładkę w tle.
+RunOnUi()          → zmiany ekranu tylko z wątku okna (DispatcherQueue).
+
+━━━━━━━━━━━━━━━━━━━━
+11. HistoryItem.cs – jeden wpis w Historii
+━━━━━━━━━━━━━━━━━━━━
+ForTrack()    → blok utworu (okładka, plakietka, atrybuty).
+ForQueued()   → to samo dla utworu dodanego przez SpotiFlow.
+ForMessage()  → szary wiersz z komunikatem.
+UpdateProfile() → podmienia „-” na liczby, gdy atrybuty stały się znane.
+AttributeView.From(profile) → zamienia AudioProfile na 4 paski do wyświetlenia.
+
+━━━━━━━━━━━━━━━━━━━━
+ŁAŃCUCH WYWOŁAŃ (A pominięty → C w kolejce)
+━━━━━━━━━━━━━━━━━━━━
+RunAsync
+ └ PollOnceAsync
+    ├ GetPlaybackStateAsync          (gra B, a było A)
+    ├ CalculateListenRatio → 0,05
+    ├ Decide → Skipped               → ShowVerdict „POMINIĘTY”
+    ├ StartTrackingAsync(B)          → ShowNowPlaying
+    └ QueueNextAsync(A, Skipped)
+       ├ FindNextTrackAsync
+       │  ├ GetProfileAsync(A)
+       │  ├ Inverted() → cel
+       │  ├ GetRecommendationsAsync → [C, D]
+       │  ├ WasRecentlyPlayed (filtr)
+       │  ├ LoadProfilesAsync → GetAudioFeaturesAsync
+       │  └ ChooseClosest → C (DistanceTo 0,30)
+       ├ OurTrackIsWaitingAsync → false
+       ├ AddToQueueAsync(C)
+       └ Remember(C)                 → AddQueuedItem „DODANO DO KOLEJKI”

@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Aplikacja okienkowa WinUI 3 (Windows App SDK) - natywny wygląd Windows 11 (Fluent Design).
+    Cała logika jest w bibliotece SpotiFlow.Core; tu jest tylko interfejs (XAML) i ViewModel (MVVM).
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>SpotiFlow</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- WinUI 3 -->
+    <UseWinUI>true</UseWinUI>
+    <!-- Zwykły plik .exe (bez instalacji MSIX), z Windows App SDK dołączonym do aplikacji,
+         więc F5 w Visual Studio działa od razu i nic nie trzeba doinstalowywać. -->
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+  </PropertyGroup>
+
+  <!-- WinUI 3 musi wiedzieć, dla jakiego procesora budować (domyślnie x64, na komputerach ARM - arm64). -->
+  <PropertyGroup>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == '' And '$(Platform)' == 'ARM64'">win-arm64</RuntimeIdentifier>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.6.4" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2957" />
+    <!-- MVVM: [ObservableProperty] i [RelayCommand] (jak w LAB-02) -->
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SpotiFlow.Core\SpotiFlow.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,33 @@
+# --- Wyniki kompilacji .NET ---
+bin/
+obj/
+publish/
+*.nupkg
+AppPackages/
+
+# --- Visual Studio / Rider / VS Code ---
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+*.userprefs
+
+# --- Testy ---
+TestResults/
+*.trx
+coverage*.xml
+
+# --- Logi i pliki tymczasowe ---
+*.log
+*.tmp
+
+# --- Sekrety (na wszelki wypadek; aplikacja trzyma ustawienia w %AppData%) ---
+.env
+*.secret.json
+appsettings.Local.json
+
+# --- System ---
+Thumbs.db
+Desktop.ini
+.DS_Store

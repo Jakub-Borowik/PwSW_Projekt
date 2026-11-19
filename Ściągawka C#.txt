@@ -1,0 +1,198 @@
+ŚCIĄGAWKA C# – składnia użyta w SpotiFlow
+(każdy punkt: co znaczy + przykład z projektu)
+
+━━━━━━━━━━━━━━━━━━━━
+1. PODŁOGA _
+━━━━━━━━━━━━━━━━━━━━
+a) _ na początku nazwy POLA = konwencja: „prywatne pole klasy”
+   private readonly HttpClient _http;
+   private SpotifyTrack? _currentTrack;
+   → od razu widać, że to pole obiektu, a nie zmienna lokalna czy parametr.
+   (to tylko zwyczaj nazewniczy, kompilator nic z tym nie robi)
+
+b) sama _ jako nazwa = „ta wartość mnie nie obchodzi”
+   using var _ = await SendAsync(...);
+   → odpowiedź trzymamy tylko po to, żeby using ją posprzątał; nie czytamy jej.
+   _ = LoadCoverAsync(...);
+   → uruchom zadanie w tle, nie czekaj na wynik (świadomie ignorujemy Task).
+
+c) _ w liczbach = separator dla czytelności
+   10_000  to to samo co 10000
+   190_000 to to samo co 190000
+
+━━━━━━━━━━━━━━━━━━━━
+2. USING
+━━━━━━━━━━━━━━━━━━━━
+a) na górze pliku = „korzystam z tej przestrzeni nazw”
+   using System.Text.Json;
+   → mogę pisać JsonSerializer zamiast System.Text.Json.JsonSerializer.
+
+b) przy zmiennej = „posprzątaj to, gdy skończy się metoda / blok”
+   using var response = await _http.GetAsync(url, ct);
+   → po wyjściu z metody response.Dispose() wywoła się samo
+     (zwolni połączenie i pamięć). Dla rzeczy typu połączenia, pliki.
+
+━━━━━━━━━━━━━━━━━━━━
+3. MODYFIKATORY DOSTĘPU – kto widzi
+━━━━━━━━━━━━━━━━━━━━
+public     – wszyscy (inne klasy, okno, testy)
+             public async Task RunAsync(...)
+private    – tylko ta klasa
+             private async Task QueueNextAsync(...)
+protected  – ta klasa i klasy dziedziczące
+             protected override Task<HttpResponseMessage> SendAsync(...)  (FakeHttpHandler)
+
+Zasada: wszystko private, public tylko to, czego potrzebuje ktoś z zewnątrz.
+
+━━━━━━━━━━━━━━━━━━━━
+4. INNE SŁOWA PRZY POLACH I METODACH
+━━━━━━━━━━━━━━━━━━━━
+static     – należy do KLASY, nie do obiektu; nie trzeba robić new
+             ListeningAnalyzer.Decide(w)      (bez new ListeningAnalyzer())
+             private static readonly HttpClient Http = new();   (jeden na całą aplikację)
+
+readonly   – można ustawić tylko raz (w deklaracji lub konstruktorze), potem nie podmienisz
+             private readonly Dictionary<string, AudioProfile> _profiles = new();
+             → słownika nie podmienisz na inny, ale DOPISYWAĆ do niego można
+
+const      – stała znana już przy kompilacji, nigdy się nie zmienia
+             private const string BaseUrl = "https://api.reccobeats.com/v1/";
+
+override   – nadpisuję metodę z klasy bazowej
+             public override string ToString() => ...
+
+partial    – klasa/właściwość rozbita na kawałki; drugi kawałek dopisuje generator kodu
+             public partial class MainViewModel
+             [ObservableProperty] public partial string Status { get; set; }
+
+━━━━━━━━━━━━━━━━━━━━
+5. WŁAŚCIWOŚCI { get; set; }
+━━━━━━━━━━━━━━━━━━━━
+{ get; set; }        – można czytać i zmieniać
+{ get; private set; }– czytać mogą wszyscy, zmieniać tylko ta klasa
+                       public SpotifyToken? Token { get; private set; }
+{ get; init; }       – ustawiasz tylko przy tworzeniu obiektu (new() { ... }), potem już nie
+                       public string Title { get; private init; }
+=> wyrażenie         – właściwość WYLICZANA za każdym razem, niczego nie przechowuje
+                       public bool IsLoggedIn => Token != null;
+                       public string Uri => "spotify:track:" + SpotifyId;
+
+━━━━━━━━━━━━━━━━━━━━
+6. STRZAŁKA =>
+━━━━━━━━━━━━━━━━━━━━
+a) krótka metoda / właściwość („zwróć to”)
+   public AudioProfile Inverted() => new(1 - Danceability, ...);
+   private bool CanStart() => IsLoggedIn && !IsRunning;
+
+b) lambda = mała funkcja bez nazwy, „dla x zrób…”
+   candidates.Where(c => c.SpotifyId != sourceId)     „zostaw te c, dla których…”
+   _monitor.Log += message => RunOnUi(() => AddMessage(message));
+   () => …  = lambda bez parametrów
+
+━━━━━━━━━━━━━━━━━━━━
+7. ZNAKI ZAPYTANIA I WYKRZYKNIKI
+━━━━━━━━━━━━━━━━━━━━
+Typ?        – może być null („może nie być wartości”)
+              AudioProfile? profile      SpotifyTrack? _currentTrack     int? ProgressMs
+
+?.          – „jeśli nie null, to…”, inaczej wynik null (bez wysypania)
+              Log?.Invoke("...")         → wywołaj tylko, jeśli ktoś się zapisał
+              queue?.Queue               → jeśli queue jest null, całość daje null
+
+??          – „jeśli po lewej null, weź prawą”
+              value ?? 0                 page?.Content ?? new()
+
+warunek ? a : b – operator trójargumentowy: „jeśli tak, to a, inaczej b”
+              decision == ListeningDecision.Skipped ? old.Inverted() : old
+
+!warunek    – negacja, „NIE”
+              if (!response.IsSuccessStatusCode)     !IsRunning
+
+!=          – „różne od”
+              Token != null
+
+zmienna!    – „wiem, że to nie null, nie ostrzegaj” (wykrzyknik PO zmiennej)
+              Token!.AccessToken        request.RequestUri!
+
+━━━━━━━━━━━━━━━━━━━━
+8. ASYNC / AWAIT / TASK
+━━━━━━━━━━━━━━━━━━━━
+async        – metoda może czekać (await) bez blokowania okna
+await        – „poczekaj na wynik, a w międzyczasie okno działa dalej”
+Task         – metoda async bez wyniku         public async Task RunAsync(...)
+Task<T>      – metoda async zwracająca T       Task<List<RecommendedTrack>>
+Async w nazwie – konwencja: ta metoda jest asynchroniczna
+CancellationToken ct – sygnał „przestań” (Stop → Cancel())
+
+━━━━━━━━━━━━━━━━━━━━
+9. TWORZENIE OBIEKTÓW I TYPY
+━━━━━━━━━━━━━━━━━━━━
+var x = …     – kompilator sam zgaduje typ z prawej strony
+                var result = new Dictionary<string, AudioProfile>();
+new()         – skrót, gdy typ już jest napisany po lewej
+                private readonly Dictionary<string, AudioProfile> _profiles = new();
+new() { … }   – utwórz i od razu ustaw właściwości
+                new HttpClient() { Timeout = TimeSpan.FromSeconds(15) }
+record        – krótka klasa na same dane; konstruktor i porównywanie za darmo
+                public record AudioProfile(double Danceability, double Energy, ...);
+<T>           – typ generyczny: „lista CZEGO”, „słownik Z CZEGO NA CO”
+                List<RecommendedTrack>    Dictionary<string, AudioProfile>    ContentPage<T>
+enum          – zamknięta lista wartości
+                ListeningDecision.Skipped / ListeningDecision.Engaged
+
+━━━━━━━━━━━━━━━━━━━━
+10. ATRYBUTY [ … ]
+━━━━━━━━━━━━━━━━━━━━
+Etykieta nad czymś, którą czyta inny kod / generator:
+[JsonPropertyName("energy")]  – pole JSON "energy" → ta właściwość
+[JsonIgnore]                  – nie bierz tego z/do JSON-a
+[ObservableProperty]          – generator dopisze powiadamianie okna o zmianie
+[RelayCommand]                – generator zrobi z metody komendę dla przycisku (StartCommand)
+[Fact]                        – to jest test xUnit
+
+━━━━━━━━━━━━━━━━━━━━
+11. ZDARZENIA (event)
+━━━━━━━━━━━━━━━━━━━━
+public event Action<string>? Log;          – „dzwonek”, na który można się zapisać
+_monitor.Log += message => …;              – += zapisz się (co zrobić, gdy zadzwoni)
+Log?.Invoke("Start monitorowania.");       – zadzwoń (jeśli ktoś słucha)
+Action<A, B> – funkcja przyjmująca A i B, nic niezwracająca
+Func<T>      – funkcja zwracająca T        (Func<DateTime> clock w PlayHistory)
+
+━━━━━━━━━━━━━━━━━━━━
+12. TEKST
+━━━━━━━━━━━━━━━━━━━━
+$"…{x}…"      – wstaw wartość x do tekstu
+                $"W = {w:0.00}"     → "W = 0,05"  (:0.00 = 2 miejsca po przecinku)
+                {DateTime.Now:HH:mm} → "14:05"
+"""…"""       – surowy tekst wielolinijkowy (JSON w testach)
+tekst[od..]   – wycinek od pozycji do końca     href[(index + marker.Length)..]
+tekst[..do]   – wycinek od początku do pozycji  id[..queryStart]
+\n            – nowa linia
+
+━━━━━━━━━━━━━━━━━━━━
+13. LINQ (operacje na listach)
+━━━━━━━━━━━━━━━━━━━━
+.Where(x => warunek)  – zostaw pasujące
+.Select(x => coś)     – zamień każdy element na coś
+.FirstOrDefault(...)  – pierwszy pasujący albo null
+.Take(40)             – najwyżej 40 pierwszych
+.Distinct()           – bez powtórzeń
+.ToList()             – zamień wynik na List
+.Count                – ile elementów
+
+━━━━━━━━━━━━━━━━━━━━
+14. WYJĄTKI
+━━━━━━━━━━━━━━━━━━━━
+try { … } catch (Exception ex) { … }  – złap błąd zamiast wywalić aplikację
+catch (...) when (warunek)            – złap tylko, jeśli warunek spełniony
+   catch (SpotifyApiException ex) when (ex.StatusCode == HttpStatusCode.Forbidden)
+finally { … }                         – wykona się zawsze (sprzątanie po pętli)
+throw new SpotifyApiException(...)    – zgłoś błąd
+is / is not                           – sprawdzenie typu:  ex is not OperationCanceledException
+
+━━━━━━━━━━━━━━━━━━━━
+15. KOMENTARZE
+━━━━━━━━━━━━━━━━━━━━
+// komentarz      – zwykły, dla czytającego kod
+/// <summary>     – komentarz dokumentacyjny; VS pokazuje go w podpowiedzi po najechaniu na nazwę
